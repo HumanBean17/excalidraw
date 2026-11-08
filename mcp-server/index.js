@@ -108,6 +108,11 @@ const bridge = createServer(async (req, res) => {
     });
     res.write(`data: ${JSON.stringify({ type: "hello" })}\n\n`);
     sseClients.add(res);
+    // A page that connects after edits were broadcast never saw them —
+    // replay the last known scene so it syncs on connect.
+    if (sceneCache.elements.length > 0 || sceneCache.appState) {
+      res.write(`data: ${JSON.stringify({ type: "scene", ...sceneCache })}\n\n`);
+    }
     req.on("close", () => sseClients.delete(res));
     return;
   }
