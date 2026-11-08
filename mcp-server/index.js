@@ -10,6 +10,7 @@ const help = `excalidraw-mcp ${VERSION}
 
 Usage:
   excalidraw-mcp serve [--host 127.0.0.1] [--port 3845] [--data-dir PATH]
+                       [--tool-profile agent|advanced]
   excalidraw-mcp stdio [--url http://127.0.0.1:3845/mcp]
 
 Commands:
@@ -22,12 +23,14 @@ Options:
   --data-dir         Store directory (default: ~/.excalidraw).
   --url              HTTP MCP endpoint used by the stdio proxy.
   --allowed-origins  Comma-separated additional browser origins.
+  --tool-profile     Tool surface: agent (default) or advanced (includes raw tools).
   --help             Show this help.
   --version          Show the version.
 
 Environment:
   EXCALIDRAW_MCP_HOST, EXCALIDRAW_MCP_PORT, EXCALIDRAW_MCP_DATA_DIR,
-  EXCALIDRAW_MCP_URL, EXCALIDRAW_MCP_ALLOWED_ORIGINS
+  EXCALIDRAW_MCP_URL, EXCALIDRAW_MCP_ALLOWED_ORIGINS,
+  EXCALIDRAW_MCP_TOOL_PROFILE
 `;
 
 const takeValue = (args, index, option) => {
@@ -52,9 +55,14 @@ const parseArgs = (argv) => {
     } else if (option === "--version") {
       options.version = true;
     } else if (
-      ["--host", "--port", "--data-dir", "--url", "--allowed-origins"].includes(
-        option,
-      )
+      [
+        "--host",
+        "--port",
+        "--data-dir",
+        "--url",
+        "--allowed-origins",
+        "--tool-profile",
+      ].includes(option)
     ) {
       options[option.slice(2)] = takeValue(args, index, option);
       index += 1;
@@ -117,6 +125,8 @@ const main = async () => {
     port,
     dataDir,
     allowedOrigins,
+    toolProfile:
+      options["tool-profile"] ?? process.env.EXCALIDRAW_MCP_TOOL_PROFILE,
   });
   console.error(`excalidraw-mcp ${VERSION} listening at ${service.origin}/mcp`);
   console.error(`Persistent store: ${dataDir}`);

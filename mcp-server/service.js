@@ -6,7 +6,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { DrawingStore } from "./store.js";
 import { registerTools } from "./tools.js";
 
-export const VERSION = "2.0.0";
+export const VERSION = "3.0.0";
 const MAX_REPORT_BYTES = 50 * 1024 * 1024;
 
 const json = (res, status, value) => {
@@ -121,9 +121,13 @@ export const createHttpService = async ({
   port = 3845,
   dataDir,
   allowedOrigins = [],
+  toolProfile = "agent",
 } = {}) => {
   if (!dataDir) {
     throw new Error("dataDir is required");
+  }
+  if (!["agent", "advanced"].includes(toolProfile)) {
+    throw new Error(`Invalid tool profile: ${toolProfile}`);
   }
   const store = await new DrawingStore(dataDir).initialize();
   const allowedOriginSet = new Set(allowedOrigins);
@@ -144,7 +148,7 @@ export const createHttpService = async ({
           name: "excalidraw-mcp",
           version: VERSION,
         });
-        registerTools(mcpServer, store);
+        registerTools(mcpServer, store, { profile: toolProfile });
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
           enableJsonResponse: true,

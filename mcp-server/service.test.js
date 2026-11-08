@@ -34,7 +34,11 @@ const connectHttpClient = async () => {
 };
 
 const call = async (name, args = {}) => {
-  const result = await client.callTool({ name, arguments: args });
+  const nextArgs =
+    name === "get_scene" && args.detail === undefined
+      ? { ...args, detail: "full" }
+      : args;
+  const result = await client.callTool({ name, arguments: nextArgs });
   assert.notEqual(result.isError, true, result.content?.[0]?.text);
   return result.structuredContent;
 };
@@ -57,7 +61,11 @@ const waitForScene = (events, predicate = () => true) =>
 
 beforeEach(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "excalidraw-mcp-test-"));
-  service = await createHttpService({ port: 0, dataDir });
+  service = await createHttpService({
+    port: 0,
+    dataDir,
+    toolProfile: "advanced",
+  });
   client = await connectHttpClient();
 });
 
@@ -152,10 +160,10 @@ test("element mutation schemas preserve shape field types and reject corruption"
     assert.equal(properties.width.type, "number");
     assert.equal(properties.height.type, "number");
     assert.equal(properties.opacity.type, "number");
-    assert.equal(properties.isDeleted.type, "boolean");
     assert.equal(properties.groupIds.items.type, "string");
     assert.equal(properties.points.items.items.type, "number");
   }
+  assert.equal(elementProperties.isDeleted.type, "boolean");
 
   const result = await client.callTool({
     name: "add_elements",
@@ -167,7 +175,7 @@ test("element mutation schemas preserve shape field types and reject corruption"
 
 test("HTTP MCP persists concurrent edits across a full server restart", async () => {
   const tools = await client.listTools();
-  assert.equal(tools.tools.length, 16);
+  assert.equal(tools.tools.length, 19);
 
   await Promise.all(
     Array.from({ length: 20 }, (_, index) =>
@@ -180,7 +188,11 @@ test("HTTP MCP persists concurrent edits across a full server restart", async ()
 
   await client.close();
   await service.close();
-  service = await createHttpService({ port: 0, dataDir });
+  service = await createHttpService({
+    port: 0,
+    dataDir,
+    toolProfile: "advanced",
+  });
   client = await connectHttpClient();
 
   const after = await call("get_scene");
@@ -277,7 +289,7 @@ test("malformed requests and disallowed origins do not crash the service", async
 
   const health = await fetch(`${service.origin}/health`);
   assert.equal(health.status, 200);
-  assert.deepEqual(await health.json(), { status: "ok", version: "2.0.0" });
+  assert.deepEqual(await health.json(), { status: "ok", version: "3.0.0" });
 });
 
 test("stdio proxies the same running HTTP server", async () => {
@@ -296,7 +308,7 @@ test("stdio proxies the same running HTTP server", async () => {
   });
   const result = await proxyClient.callTool({
     name: "get_scene",
-    arguments: {},
+    arguments: { detail: "full" },
   });
   assert.equal(result.structuredContent.elements[0].id, "through-stdio");
   await proxyClient.close();
@@ -392,4 +404,73 @@ test("browser reports do not echo back to their originating SSE client", async (
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(echoed, false);
   source.close();
+});
+
+test("advanced raw inputs share text and linear normalization", async () => {
+  await call("add_elements", {
+    elements: [
+      { id: "raw-text", type: "text", x: 0, y: 0, text: "Raw\ntext" },
+      {
+        id: "raw-arrow",
+        type: "arrow",
+        x: 0,
+        y: 0,
+        points: [
+          [0, 0],
+          [90, 0],
+        ],
+      },
+    ],
+  });
+  let scene = await call("get_scene");
+  const text = scene.elements.find((element) => element.id === "raw-text");
+  const arrow = scene.elements.find((element) => element.id === "raw-arrow");
+  assert.equal(text.originalText, "Raw\ntext");
+  assert.ok(text.width > 0);
+  assert.ok(text.height > 0);
+  assert.ok(text.baseline > 0);
+  assert.equal(arrow.width, 90);
+  assert.equal(arrow.height, 0);
+
+  await call("update_elements", {
+    updates: [{ id: "raw-text", changes: { text: "Changed" } }],
+  });
+  scene = await call("get_scene");
+  assert.equal(
+    scene.elements.find((element) => element.id === "raw-text").originalText,
+    "Changed",
+  );
+
+  await call("update_elements", {
+    updates: [
+      { id: "raw-text", changes: { fontSize: 40 } },
+      { id: "raw-arrow", changes: { width: 180 } },
+    ],
+  });
+  scene = await call("get_scene");
+  assert.equal(
+    scene.elements.find((element) => element.id === "raw-text").baseline,
+    38,
+  );
+  assert.deepEqual(
+    scene.elements.find((element) => element.id === "raw-arrow").points,
+    [
+      [0, 0],
+      [180, 0],
+    ],
+  );
+  const unchanged = await call("update_scene", { elements: scene.elements });
+  assert.equal(unchanged.revision, scene.revision);
+
+  const shape = await call("draw_shape", {
+    type: "arrow",
+    x: 0,
+    y: 0,
+    points: [
+      [0, 0],
+      [90, 0],
+    ],
+  });
+  assert.equal(shape.width, 90);
+  assert.equal(shape.height, 0);
 });

@@ -1,6 +1,6 @@
 {
   "name": "excalidraw-mcp",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Persistent project-based MCP server for agent-driven Excalidraw drawings",
   "main": "index.js",
   "bin": {
@@ -13,6 +13,10 @@
     "store.js",
     "tools.js",
     "elements.js",
+    "scene.js",
+    "render.js",
+    "render-entry.js",
+    "host-shims.js",
     "README.md"
   ],
   "scripts": {
@@ -33,6 +37,12 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "zod": "^4.6.7"
+  },
+  "optionalDependencies": {
+    "@excalidraw/excalidraw": "^0.18.1",
+    "esbuild": "^0.28.2",
+    "jsdom": "22.1.0",
+    "playwright": "1.58.2"
   },
   "type": "module"
 }

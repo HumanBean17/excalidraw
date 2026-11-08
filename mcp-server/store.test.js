@@ -42,8 +42,13 @@ test("serializes mutations without losing concurrent additions", async () => {
   assert.equal(new Set(drawing.elements.map((item) => item.id)).size, 50);
 });
 
-test("uses optimistic revision checks", async () => {
+test("uses optimistic revision checks and ignores no-op mutations", async () => {
   await store.mutateDrawing(undefined, () => ({ elements: [] }));
+  assert.equal(store.getActiveDrawing().revision, 0);
+  await store.mutateDrawing(undefined, (current) => ({
+    elements: [{ id: "element", type: "rectangle", x: 0, y: 0 }],
+    appState: current.appState,
+  }));
   await assert.rejects(
     store.mutateDrawing(undefined, () => ({ elements: [] }), 0),
     (error) => error instanceof StoreError && error.statusCode === 409,

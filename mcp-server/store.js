@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { isDeepStrictEqual } from "node:util";
 import {
   mkdir,
   open,
@@ -411,6 +412,13 @@ export class DrawingStore extends EventEmitter {
         );
       }
       const changes = await mutation(clone(drawing));
+      if (
+        Object.entries(changes).every(([key, value]) =>
+          isDeepStrictEqual(value, drawing[key]),
+        )
+      ) {
+        return clone(drawing);
+      }
       const next = {
         ...drawing,
         ...changes,
