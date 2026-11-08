@@ -100,6 +100,47 @@ test("legacy data directory migrates without overwriting an existing store", asy
   );
 });
 
+test("tool schemas use object array items compatible with Moonshot", async () => {
+  const { tools } = await client.listTools();
+  const assertObjectItems = (schema) => {
+    if (!schema || typeof schema !== "object") {
+      return;
+    }
+    if ("items" in schema) {
+      assert.equal(typeof schema.items, "object");
+      assert.equal(Array.isArray(schema.items), false);
+    }
+    for (const value of Object.values(schema)) {
+      if (Array.isArray(value)) {
+        value.forEach(assertObjectItems);
+      } else {
+        assertObjectItems(value);
+      }
+    }
+  };
+  tools.forEach((tool) => assertObjectItems(tool.inputSchema));
+
+  const pointSchema = tools.find((tool) => tool.name === "draw_shape")
+    .inputSchema.properties.points.items;
+  assert.deepEqual(pointSchema.items, { type: "number" });
+  assert.equal(pointSchema.minItems, 2);
+  assert.equal(pointSchema.maxItems, 2);
+
+  const result = await call("draw_shape", {
+    type: "line",
+    x: 0,
+    y: 0,
+    points: [
+      [0, 0],
+      [100, 100],
+    ],
+  });
+  assert.deepEqual(result.points, [
+    [0, 0],
+    [100, 100],
+  ]);
+});
+
 test("HTTP MCP persists concurrent edits across a full server restart", async () => {
   const tools = await client.listTools();
   assert.equal(tools.tools.length, 16);

@@ -295,7 +295,7 @@ export const registerTools = (server, store) => {
         width: z.number().nonnegative().optional(),
         height: z.number().nonnegative().optional(),
         text: z.string().optional(),
-        points: z.array(z.tuple([z.number(), z.number()])).optional(),
+        points: z.array(z.array(z.number()).length(2)).optional(),
         angle: z.number().finite().optional(),
         strokeColor: z.string().optional(),
         backgroundColor: z.string().optional(),
