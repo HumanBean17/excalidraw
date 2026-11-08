@@ -5,12 +5,20 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 const BRIDGE_PORT = Number(process.env.EXCALIDRAW_MCP_PORT || 3845);
+const BRIDGE_ORIGIN = `http://localhost:${BRIDGE_PORT}`;
 
 // ---------------------------------------------------------------------------
-// Scene cache + SSE bridge (the running Excalidraw page talks to this)
+// Scene state.
+//
+// Every MCP tool call must reach the open Excalidraw page, no matter which
+// process instance handles it. Only one process can hold the SSE bridge
+// port; the rest become secondaries and proxy all state through the
+// primary's HTTP endpoints, so N instances behave like one.
 // ---------------------------------------------------------------------------
 
 let sceneCache = { elements: [], appState: null };
+let isPrimary = true;
+
 const sseClients = new Set();
 
 const sendSse = (payload) => {
@@ -38,6 +46,44 @@ const readBody = (req) =>
     req.on("error", reject);
   });
 
+const getScene = async () => {
+  if (isPrimary) {
+    return sceneCache;
+  }
+  let res;
+  try {
+    res = await fetch(`${BRIDGE_ORIGIN}/scene`);
+  } catch {
+    throw new Error(
+      `excalidraw bridge unreachable at ${BRIDGE_ORIGIN} — the MCP server instance holding the port is not running`,
+    );
+  }
+  return res.json();
+};
+
+const commitScene = async (elements, appState) => {
+  if (isPrimary) {
+    sceneCache = { elements, appState: appState ?? sceneCache.appState };
+    sendSse({ type: "scene", ...sceneCache });
+    return;
+  }
+  let res;
+  try {
+    res = await fetch(`${BRIDGE_ORIGIN}/broadcast`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ elements, appState }),
+    });
+  } catch {
+    throw new Error(
+      `excalidraw bridge unreachable at ${BRIDGE_ORIGIN} — the MCP server instance holding the port is not running`,
+    );
+  }
+  if (!res.ok) {
+    throw new Error(`excalidraw bridge rejected the update (${res.status})`);
+  }
+};
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -52,7 +98,7 @@ const bridge = createServer(async (req, res) => {
     return;
   }
 
-  const url = new URL(req.url, `http://localhost:${BRIDGE_PORT}`);
+  const url = new URL(req.url, BRIDGE_ORIGIN);
 
   if (req.method === "GET" && url.pathname === "/events") {
     res.writeHead(200, {
@@ -74,6 +120,15 @@ const bridge = createServer(async (req, res) => {
         appState: body.appState ?? sceneCache.appState,
       };
       sendSse({ type: "scene", ...sceneCache });
+    }
+    res.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/broadcast-viewport") {
+    const body = await readBody(req);
+    if (body.appState) {
+      sendSse({ type: "viewport", appState: body.appState });
     }
     res.writeHead(200, { "Content-Type": "application/json" }).end("{}");
     return;
@@ -102,12 +157,18 @@ const bridge = createServer(async (req, res) => {
 });
 
 bridge.on("error", (error) => {
-  // e.g. bridge port already held by another instance — MCP tools still work
-  console.error(`excalidraw-mcp bridge unavailable: ${error.message}`);
+  if (error.code === "EADDRINUSE") {
+    isPrimary = false;
+    console.error(
+      `excalidraw-mcp: bridge port ${BRIDGE_PORT} held by another instance — running in secondary (proxy) mode`,
+    );
+    return;
+  }
+  console.error(`excalidraw-mcp bridge error: ${error.message}`);
 });
 
 bridge.listen(BRIDGE_PORT, () => {
-  console.error(`excalidraw-mcp bridge listening on http://localhost:${BRIDGE_PORT}`);
+  console.error(`excalidraw-mcp bridge listening on ${BRIDGE_ORIGIN}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -116,14 +177,20 @@ bridge.listen(BRIDGE_PORT, () => {
 
 const now = () => Date.now();
 
-// Excalidraw reconciles by version: a targeted edit must win over the copy
-// the page already holds, so always bump it above the cached one.
+// Excalidraw reconciles by version: an edit must win over the copy the page
+// already holds, so bump it above the cached one.
 const bumpVersion = (element, cached) => {
   const baseVersion = Math.max(element.version || 1, cached?.version || 1);
   return { ...element, version: baseVersion + 1, updated: now() };
 };
 
-const findById = (id) => sceneCache.elements.find((el) => el.id === id);
+// Incoming elements whose ids already exist must carry a higher version or
+// the page silently keeps its copy.
+const withBumpedVersions = (incoming, existing) =>
+  incoming.map((el) => {
+    const cached = existing.find((c) => c.id === el.id);
+    return cached ? bumpVersion(el, cached) : el;
+  });
 
 const SHAPES = [
   "rectangle",
@@ -184,7 +251,7 @@ const makeShape = (spec) => {
     case "arrow":
       element.points = points ?? [
         [0, 0],
-        [width, height],
+        [width ?? 100, height ?? 100],
       ];
       element.startBinding = null;
       element.endBinding = null;
@@ -217,7 +284,7 @@ const makeShape = (spec) => {
     case "freedraw":
       element.points = points ?? [
         [0, 0],
-        [width, height],
+        [width ?? 100, height ?? 100],
       ];
       element.simulatePressure = true;
       element.pressures = element.points.map(() => 0.5);
@@ -233,7 +300,7 @@ const makeShape = (spec) => {
 
 const server = new McpServer({
   name: "excalidraw-mcp",
-  version: "0.2.0",
+  version: "0.3.0",
 });
 
 const jsonResult = (value) => ({
@@ -255,7 +322,7 @@ server.registerTool(
     description:
       "Get the current Excalidraw scene (elements and appState) as last reported by the open Excalidraw page.",
   },
-  async () => jsonResult(sceneCache),
+  async () => jsonResult(await getScene()),
 );
 
 server.registerTool(
@@ -269,9 +336,10 @@ server.registerTool(
     },
   },
   async ({ elements, appState }) => {
-    sceneCache = { elements, appState: appState ?? sceneCache.appState };
-    sendSse({ type: "scene", ...sceneCache });
-    return jsonResult({ ok: true, elementCount: elements.length });
+    const current = await getScene();
+    const next = withBumpedVersions(elements, current.elements);
+    await commitScene(next, appState);
+    return jsonResult({ ok: true, elementCount: next.length });
   },
 );
 
@@ -283,12 +351,13 @@ server.registerTool(
     inputSchema: { elements: z.array(elementSchema) },
   },
   async ({ elements }) => {
-    sceneCache = {
-      elements: [...sceneCache.elements, ...elements.map((el) => bumpVersion(el, findById(el.id)))],
-      appState: sceneCache.appState,
-    };
-    sendSse({ type: "scene", ...sceneCache });
-    return jsonResult({ ok: true, elementCount: sceneCache.elements.length });
+    const current = await getScene();
+    const next = [
+      ...current.elements,
+      ...withBumpedVersions(elements, current.elements),
+    ];
+    await commitScene(next);
+    return jsonResult({ ok: true, elementCount: next.length });
   },
 );
 
@@ -307,19 +376,23 @@ server.registerTool(
     },
   },
   async ({ updates }) => {
+    const current = await getScene();
     const touched = [];
     const missing = [];
-    for (const { id, changes } of updates) {
-      const index = sceneCache.elements.findIndex((el) => el.id === id);
-      if (index === -1) {
-        missing.push(id);
-        continue;
+    const elements = current.elements.map((el) => {
+      const update = updates.find((u) => u.id === el.id);
+      if (!update) {
+        return el;
       }
-      const current = sceneCache.elements[index];
-      sceneCache.elements[index] = bumpVersion({ ...current, ...changes }, current);
-      touched.push(id);
+      touched.push(el.id);
+      return bumpVersion({ ...el, ...update.changes }, el);
+    });
+    for (const { id } of updates) {
+      if (!touched.includes(id)) {
+        missing.push(id);
+      }
     }
-    sendSse({ type: "scene", ...sceneCache });
+    await commitScene(elements);
     return jsonResult({ ok: true, updated: touched, notFound: missing });
   },
 );
@@ -327,18 +400,14 @@ server.registerTool(
 server.registerTool(
   "delete_elements",
   {
-    description:
-      "Remove elements from the open Excalidraw page, by id.",
+    description: "Remove elements from the open Excalidraw page, by id.",
     inputSchema: { ids: z.array(z.string()) },
   },
   async ({ ids }) => {
-    const before = sceneCache.elements.length;
-    sceneCache = {
-      elements: sceneCache.elements.filter((el) => !ids.includes(el.id)),
-      appState: sceneCache.appState,
-    };
-    sendSse({ type: "scene", ...sceneCache });
-    return jsonResult({ ok: true, deleted: before - sceneCache.elements.length });
+    const current = await getScene();
+    const elements = current.elements.filter((el) => !ids.includes(el.id));
+    await commitScene(elements);
+    return jsonResult({ ok: true, deleted: current.elements.length - elements.length });
   },
 );
 
@@ -389,7 +458,25 @@ server.registerTool(
       ...(scrollY !== undefined ? { scrollY } : {}),
       ...(zoom !== undefined ? { zoom: { value: zoom } } : {}),
     };
-    sendSse({ type: "viewport", appState });
+    if (isPrimary) {
+      sendSse({ type: "viewport", appState });
+    } else {
+      let res;
+      try {
+        res = await fetch(`${BRIDGE_ORIGIN}/broadcast-viewport`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ appState }),
+        });
+      } catch {
+        throw new Error(
+          `excalidraw bridge unreachable at ${BRIDGE_ORIGIN} — the MCP server instance holding the port is not running`,
+        );
+      }
+      if (!res.ok) {
+        throw new Error(`excalidraw bridge rejected the update (${res.status})`);
+      }
+    }
     return jsonResult({ ok: true, appState });
   },
 );
@@ -400,8 +487,7 @@ server.registerTool(
     description: "Remove all elements from the open Excalidraw page.",
   },
   async () => {
-    sceneCache = { elements: [], appState: sceneCache.appState };
-    sendSse({ type: "scene", ...sceneCache });
+    await commitScene([]);
     return jsonResult({ ok: true });
   },
 );
