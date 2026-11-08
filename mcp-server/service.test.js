@@ -141,6 +141,30 @@ test("tool schemas use object array items compatible with Moonshot", async () =>
   ]);
 });
 
+test("element mutation schemas preserve shape field types and reject corruption", async () => {
+  const { tools } = await client.listTools();
+  const elementProperties = tools.find((tool) => tool.name === "add_elements")
+    .inputSchema.properties.elements.items.properties;
+  const changeProperties = tools.find((tool) => tool.name === "update_elements")
+    .inputSchema.properties.updates.items.properties.changes.properties;
+
+  for (const properties of [elementProperties, changeProperties]) {
+    assert.equal(properties.width.type, "number");
+    assert.equal(properties.height.type, "number");
+    assert.equal(properties.opacity.type, "number");
+    assert.equal(properties.isDeleted.type, "boolean");
+    assert.equal(properties.groupIds.items.type, "string");
+    assert.equal(properties.points.items.items.type, "number");
+  }
+
+  const result = await client.callTool({
+    name: "add_elements",
+    arguments: { elements: [{ ...element("invalid"), width: "," }] },
+  });
+  assert.equal(result.isError, true);
+  assert.equal((await call("get_scene")).elements.length, 0);
+});
+
 test("HTTP MCP persists concurrent edits across a full server restart", async () => {
   const tools = await client.listTools();
   assert.equal(tools.tools.length, 16);

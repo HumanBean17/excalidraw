@@ -13,12 +13,83 @@ const jsonResult = (value) => ({
   structuredContent: value,
 });
 
+const pointSchema = z.array(z.number().finite()).length(2);
+const roundnessSchema = z
+  .object({ type: z.number().finite() })
+  .nullable()
+  .optional();
+const bindingSchema = z
+  .object({
+    elementId: z.string(),
+    focus: z.number().finite(),
+    gap: z.number().finite(),
+    fixedPoint: pointSchema.nullable().optional(),
+    mode: z.string().optional(),
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
+const optionalElementFields = {
+  width: z.number().nonnegative().finite().optional(),
+  height: z.number().nonnegative().finite().optional(),
+  angle: z.number().finite().optional(),
+  strokeColor: z.string().optional(),
+  backgroundColor: z.string().optional(),
+  fillStyle: z.string().optional(),
+  strokeWidth: z.number().nonnegative().finite().optional(),
+  strokeStyle: z.string().optional(),
+  roughness: z.number().nonnegative().finite().optional(),
+  opacity: z.number().min(0).max(100).finite().optional(),
+  groupIds: z.array(z.string()).optional(),
+  frameId: z.string().nullable().optional(),
+  roundness: roundnessSchema,
+  seed: z.number().int().optional(),
+  version: z.number().int().optional(),
+  versionNonce: z.number().int().optional(),
+  isDeleted: z.boolean().optional(),
+  boundElements: z
+    .array(z.object({ id: z.string(), type: z.string() }).passthrough())
+    .nullable()
+    .optional(),
+  updated: z.number().finite().optional(),
+  link: z.string().nullable().optional(),
+  locked: z.boolean().optional(),
+  points: z.array(pointSchema).optional(),
+  startBinding: bindingSchema,
+  endBinding: bindingSchema,
+  startArrowhead: z.string().nullable().optional(),
+  endArrowhead: z.string().nullable().optional(),
+  focus: z.number().finite().optional(),
+  gap: z.number().finite().optional(),
+  simulatePressure: z.boolean().optional(),
+  pressures: z.array(z.number().finite()).optional(),
+  text: z.string().optional(),
+  originalText: z.string().optional(),
+  fontSize: z.number().positive().finite().optional(),
+  fontFamily: z.number().int().optional(),
+  textAlign: z.enum(["left", "center", "right"]).optional(),
+  verticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
+  containerId: z.string().nullable().optional(),
+  lineHeight: z.number().positive().finite().optional(),
+  baseline: z.number().finite().optional(),
+};
+
 const elementSchema = z
   .object({
     id: z.string().min(1),
     type: z.string().min(1),
     x: z.number().finite(),
     y: z.number().finite(),
+    ...optionalElementFields,
+  })
+  .passthrough();
+
+const elementChangesSchema = z
+  .object({
+    x: z.number().finite().optional(),
+    y: z.number().finite().optional(),
+    ...optionalElementFields,
   })
   .passthrough();
 
@@ -211,7 +282,7 @@ export const registerTools = (server, store) => {
         updates: z.array(
           z.object({
             id: z.string(),
-            changes: z.record(z.string(), z.unknown()),
+            changes: elementChangesSchema,
           }),
         ),
       },
@@ -295,7 +366,7 @@ export const registerTools = (server, store) => {
         width: z.number().nonnegative().optional(),
         height: z.number().nonnegative().optional(),
         text: z.string().optional(),
-        points: z.array(z.array(z.number()).length(2)).optional(),
+        points: z.array(pointSchema).optional(),
         angle: z.number().finite().optional(),
         strokeColor: z.string().optional(),
         backgroundColor: z.string().optional(),
@@ -304,7 +375,7 @@ export const registerTools = (server, store) => {
         strokeStyle: z.string().optional(),
         roughness: z.number().nonnegative().optional(),
         opacity: z.number().min(0).max(100).optional(),
-        roundness: z.unknown().optional(),
+        roundness: roundnessSchema,
         fontSize: z.number().positive().optional(),
         fontFamily: z.number().int().optional(),
         textAlign: z.enum(["left", "center", "right"]).optional(),
