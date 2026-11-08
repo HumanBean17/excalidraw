@@ -1,20 +1,35 @@
 {
   "name": "excalidraw-mcp",
-  "version": "1.0.0",
-  "description": "MCP server for agent-driven drawing on a local Excalidraw dev app",
+  "version": "2.0.0",
+  "description": "Persistent project-based MCP server for agent-driven Excalidraw drawings",
   "main": "index.js",
   "bin": {
     "excalidraw-mcp": "index.js"
   },
   "files": [
-    "index.js"
+    "index.js",
+    "service.js",
+    "stdio.js",
+    "store.js",
+    "tools.js",
+    "elements.js",
+    "README.md"
   ],
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js serve",
+    "test": "node --test"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "excalidraw",
+    "mcp",
+    "model-context-protocol",
+    "diagram"
+  ],
+  "author": "Excalidraw",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "zod": "^4.6.7"

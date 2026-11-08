@@ -140,6 +140,9 @@ import DebugCanvas, {
   isVisualDebuggerEnabled,
   loadSavedDebugState,
 } from "./components/DebugCanvas";
+import { McpBridge } from "./mcpBridge";
+import { MCP_SERVER_ORIGIN } from "./mcpClient";
+import { ProjectsDialog } from "./components/ProjectsDialog";
 import { useSimulatedCollaborators } from "./debugCollaborators";
 import { AIComponents } from "./components/AI";
 import { ExcalidrawPlusIframeExport } from "./ExcalidrawPlusIframeExport";
@@ -467,89 +470,21 @@ const ExcalidrawWrapper = () => {
     }
   }, [excalidrawAPI]);
 
-  // MCP bridge: reports the scene to, and applies scenes pushed by, the
-  // local MCP server (see /mcp-server in the workspace root)
+  const [isProjectsOpen, setIsProjectsOpen] = useState(false);
+  const mcpBridgeRef = useRef<McpBridge | null>(null);
   useEffect(() => {
     if (!excalidrawAPI) {
       return;
     }
-
     const ownerWindow =
       document.querySelector(".excalidraw")?.ownerDocument.defaultView ??
       window;
-
-    const bridgeOrigin = "http://localhost:3845";
-    const events =
-      typeof ownerWindow.EventSource === "function"
-        ? new ownerWindow.EventSource(`${bridgeOrigin}/events`)
-        : null;
-
-    events?.addEventListener("message", (event) => {
-      let message: {
-        type?: string;
-        elements?: unknown;
-        appState?: {
-          scrollX?: number;
-          scrollY?: number;
-          zoom?: { value: number };
-        };
-      };
-      try {
-        message = JSON.parse((event as MessageEvent).data);
-      } catch {
-        return;
-      }
-
-      const toViewportAppState = () => {
-        const current = excalidrawAPI.getAppState();
-        const { scrollX, scrollY, zoom } = message.appState ?? {};
-        return {
-          scrollX: scrollX ?? current.scrollX,
-          scrollY: scrollY ?? current.scrollY,
-          zoom: {
-            value: zoom?.value ?? current.zoom.value,
-          } as typeof current.zoom,
-        };
-      };
-
-      // viewport-only updates (pan/zoom) must not touch elements
-      if (message.type === "viewport" && message.appState) {
-        excalidrawAPI.updateScene({ appState: toViewportAppState() });
-        return;
-      }
-
-      if (message.type === "scene" && Array.isArray(message.elements)) {
-        excalidrawAPI.updateScene({
-          elements: restoreElements(
-            message.elements as Parameters<typeof restoreElements>[0],
-            null,
-          ),
-          ...(message.appState ? { appState: toViewportAppState() } : {}),
-          captureUpdate: CaptureUpdateAction.IMMEDIATELY,
-        });
-      }
-    });
-
-    const reportScene = async () => {
-      try {
-        await ownerWindow.fetch(`${bridgeOrigin}/report`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            elements: excalidrawAPI.getSceneElementsIncludingDeleted(),
-            appState: excalidrawAPI.getAppState(),
-          }),
-        });
-      } catch {
-        // bridge offline — nothing to report to
-      }
-    };
-    reportScene();
-    const reportInterval = ownerWindow.setInterval(reportScene, 2000);
-
+    const bridge = new McpBridge(excalidrawAPI, ownerWindow, MCP_SERVER_ORIGIN);
+    mcpBridgeRef.current = bridge;
+    bridge.connect();
     return () => {
-      events?.close();
-      ownerWindow.clearInterval(reportInterval);
+      bridge.dispose();
+      mcpBridgeRef.current = null;
     };
   }, [excalidrawAPI]);
 
@@ -806,6 +741,7 @@ const ExcalidrawWrapper = () => {
     if (collabAPI?.isCollaborating()) {
       collabAPI.syncElements(elements);
     }
+    mcpBridgeRef.current?.notifyChange(elements, appState, files);
 
     // this check is redundant, but since this is a hot path, it's best
     // not to evaludate the nested expression every time
@@ -1123,11 +1059,21 @@ const ExcalidrawWrapper = () => {
       >
         <AppMainMenu
           onCollabDialogOpen={onCollabDialogOpen}
+          onProjectsOpen={() => setIsProjectsOpen(true)}
           isCollaborating={isCollaborating}
           isCollabEnabled={isCollabAvailable}
           theme={appTheme}
           refresh={() => forceRefresh((prev) => !prev)}
         />
+        {isProjectsOpen && mcpBridgeRef.current && (
+          <ProjectsDialog
+            ownerWindow={mcpBridgeRef.current.getOwnerWindow()}
+            onCloseRequest={() => setIsProjectsOpen(false)}
+            onFlush={() =>
+              mcpBridgeRef.current?.flush() ?? Promise.resolve(true)
+            }
+          />
+        )}
         <AppWelcomeScreen
           onCollabDialogOpen={onCollabDialogOpen}
           isCollabEnabled={isCollabAvailable}
