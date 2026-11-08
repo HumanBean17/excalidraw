@@ -1,8 +1,14 @@
 {
   "name": "excalidraw-mcp",
   "version": "1.0.0",
-  "description": "",
+  "description": "MCP server for agent-driven drawing on a local Excalidraw dev app",
   "main": "index.js",
+  "bin": {
+    "excalidraw-mcp": "index.js"
+  },
+  "files": [
+    "index.js"
+  ],
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
