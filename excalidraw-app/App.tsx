@@ -506,7 +506,9 @@ const ExcalidrawWrapper = () => {
         return {
           scrollX: scrollX ?? current.scrollX,
           scrollY: scrollY ?? current.scrollY,
-          zoom: { value: zoom?.value ?? current.zoom.value } as typeof current.zoom,
+          zoom: {
+            value: zoom?.value ?? current.zoom.value,
+          } as typeof current.zoom,
         };
       };
 
